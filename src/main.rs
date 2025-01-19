@@ -30,7 +30,20 @@ fn main() {
             println!("No bluetooth device found.");
             exit(0);
         }
+        let mut cmd = Command::new("powershell");
+        let powershell_version = get_powershell_version()
+            .expect("PowerShell not installed or unsupported version. (Supported version = 5 and 7");
+        if powershell_version.as_str().eq("5") {
+            cmd.arg("Get-WmiObject -Query \"SELECT DeviceID, PNPDeviceID FROM Win32_SerialPort\" | Where-Object { $_.PNPDeviceID -match \"BTHENUM\" } | Select-Object DeviceID, PNPDeviceID");
+        } else if powershell_version.as_str().eq("7") {
+            // Get-CimInstance -ClassName Win32_SerialPort | Where-Object { $_.PNPDeviceID -match "BTHENUM" } | Select-Object DeviceID, PNPDeviceID
+            cmd.arg("Get-CimInstance -ClassName Win32_SerialPort | Where-Object { $_.PNPDeviceID -match \"BTHENUM\" } | Select-Object DeviceID, PNPDeviceID");
+        } else {
+            panic!("Powershell not installed or unsupported version. Supported version = 5 and 7");
+        }
 
+        let cmd_stdout = String::from_utf8(cmd.output().unwrap().stdout)
+            .unwrap();
         loop {
             println!(
                 "Device name:          <{}>",
@@ -51,7 +64,7 @@ fn main() {
             );
             println!(
                 "COM Port:             <{}>",
-                device_com_port(device_info).unwrap_or(String::from("NONE"))
+                device_com_port(device_info, &cmd_stdout).unwrap_or(String::from("NONE"))
             );
             println!("---------------------------------------------------------------------------");
             if BluetoothFindNextDevice(handle_to_bluetooth_device_find, &mut device_info).is_err() {
@@ -62,24 +75,11 @@ fn main() {
     }
 }
 
-unsafe fn device_com_port(device_info: BLUETOOTH_DEVICE_INFO) -> Option<String> {
+unsafe fn device_com_port(device_info: BLUETOOTH_DEVICE_INFO, cmd_stdout: &String) -> Option<String> {
     let bluetooth_device_address = format!("{:x}", device_info.Address.Anonymous.ullLong);
-    let powershell_version = get_powershell_version()
-        .expect("PowerShell not installed or unsupported version. (Supported version = 5 and 7");
+    
 
-    let mut cmd = Command::new("powershell");
-
-    if powershell_version.as_str().eq("5") {
-        cmd.arg("Get-WmiObject -Query \"SELECT DeviceID, PNPDeviceID FROM Win32_SerialPort\" | Where-Object { $_.PNPDeviceID -match \"BTHENUM\" } | Select-Object DeviceID, PNPDeviceID");
-    } else if powershell_version.as_str().eq("7") {
-        // Get-CimInstance -ClassName Win32_SerialPort | Where-Object { $_.PNPDeviceID -match "BTHENUM" } | Select-Object DeviceID, PNPDeviceID
-        cmd.arg("Get-CimInstance -ClassName Win32_SerialPort | Where-Object { $_.PNPDeviceID -match \"BTHENUM\" } | Select-Object DeviceID, PNPDeviceID");
-    } else {
-        return None;
-    }
-
-    String::from_utf8(cmd.output().unwrap().stdout)
-        .unwrap().lines()
+   cmd_stdout.lines()
         .filter(|line| line.starts_with("COM"))
         .filter(|line| line.contains(bluetooth_device_address.to_uppercase().as_str()))
         .nth(0)
